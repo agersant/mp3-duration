@@ -95,10 +95,9 @@ fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
 
-pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
-    where P: AsRef<Path>
+pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
+    where T: Read + Seek
 {
-    let mut file = File::open(path)?;
     let mut buffer = [0; 4];
 
     let mut duration = Duration::from_secs(0);
@@ -176,11 +175,18 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
     Ok(duration)
 }
 
+pub fn from_path<P>(path: P) -> Result<Duration, Error>
+    where P: AsRef<Path>
+{
+    let mut file = File::open(path)?;
+    from_file(&mut file)
+}
+
 #[test]
 fn constant_bitrate_320() {
     use std::path::Path;
     let path = Path::new("test/CBR320.mp3");
-    let duration = get_file_duration(path).unwrap();
+    let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
 }
 
@@ -188,7 +194,7 @@ fn constant_bitrate_320() {
 fn variable_bitrate_v0() {
     use std::path::Path;
     let path = Path::new("test/VBR0.mp3");
-    let duration = get_file_duration(path).unwrap();
+    let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
 }
 
@@ -196,7 +202,7 @@ fn variable_bitrate_v0() {
 fn variable_bitrate_v9() {
     use std::path::Path;
     let path = Path::new("test/VBR9.mp3");
-    let duration = get_file_duration(path).unwrap();
+    let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
 }
 
@@ -204,7 +210,7 @@ fn variable_bitrate_v9() {
 fn id3v1() {
     use std::path::Path;
     let path = Path::new("test/ID3v1.mp3");
-    let duration = get_file_duration(path).unwrap();
+    let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
 }
 
@@ -212,6 +218,6 @@ fn id3v1() {
 fn id3v2() {
     use std::path::Path;
     let path = Path::new("test/ID3v2.mp3");
-    let duration = get_file_duration(path).unwrap();
+    let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
 }
