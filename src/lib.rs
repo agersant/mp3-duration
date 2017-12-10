@@ -29,20 +29,19 @@ enum Layer {
     Layer3,
 }
 
-static BIT_RATES: [[[u32; 16]; 4]; 3] = [
-    [
+static BIT_RATES: [[[u32; 16]; 4]; 3] = [[
         [0;16],
         [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0], // Mpeg1 Layer1
         [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0],    // Mpeg1 Layer2
         [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0],     // Mpeg1 Layer3
     ],
-    [
+                                         [
         [0;16],
         [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0],   // Mpeg2 Layer1
         [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],        // Mpeg2 Layer2
         [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],        // Mpeg2 Layer3
     ],
-    [
+                                         [
         [0;16],
         [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0],   // Mpeg25 Layer1
         [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],        // Mpeg25 Layer2
@@ -92,10 +91,12 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
     loop {
         match file.read_exact(&mut buffer[..]) {
             Ok(_) => (),
-            Err(e) => match e.kind() {
-                std::io::ErrorKind::UnexpectedEof => break,
-                _ => bail!(e),
-            },
+            Err(e) => {
+                match e.kind() {
+                    std::io::ErrorKind::UnexpectedEof => break,
+                    _ => bail!(e),
+                }
+            }
         };
 
         // ID3v1 frame
@@ -119,7 +120,7 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
             continue;
         }
 
-        // MP3 frame
+        // MPEG frame
         let header = (buffer[0] as u32) << 24 | (buffer[1] as u32) << 16 |
                      (buffer[2] as u32) << 8 | buffer[3] as u32;
         let is_mp3 = header >> 21 == 0x7FF;
@@ -149,7 +150,7 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
             let num_samples = get_samples_per_frame(layer)?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             let frame_length = if layer == Layer::Layer1 {
-                ( 12 * bitrate / sampling_rate + padding ) * 4
+                (12 * bitrate / sampling_rate + padding) * 4
             } else {
                 144 * bitrate / sampling_rate + padding
             } - 4; // header already read
