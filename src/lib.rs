@@ -212,33 +212,40 @@ pub fn from_path<P>(path: P) -> Result<Duration, Error>
 fn constant_bitrate_320() {
     let path = Path::new("test/CBR320.mp3");
     let duration = from_path(path).unwrap();
-    assert_eq!(398, duration.as_secs())
+    assert_eq!(398, duration.as_secs());
 }
 
 #[test]
 fn variable_bitrate_v0() {
     let path = Path::new("test/VBR0.mp3");
     let duration = from_path(path).unwrap();
-    assert_eq!(398, duration.as_secs())
+    assert_eq!(398, duration.as_secs());
 }
 
 #[test]
 fn variable_bitrate_v9() {
     let path = Path::new("test/VBR9.mp3");
     let duration = from_path(path).unwrap();
-    assert_eq!(398, duration.as_secs())
+    assert_eq!(398, duration.as_secs());
 }
 
 #[test]
 fn id3v1() {
     let path = Path::new("test/ID3v1.mp3");
     let duration = from_path(path).unwrap();
-    assert_eq!(398, duration.as_secs())
+    assert_eq!(398, duration.as_secs());
 }
 
 #[test]
 fn id3v2() {
     let path = Path::new("test/ID3v2.mp3");
     let duration = from_path(path).unwrap();
-    assert_eq!(398, duration.as_secs())
+    assert_eq!(398, duration.as_secs());
+}
+
+#[test]
+fn bad_file() {
+    let path = Path::new("test/piano.jpeg");
+    let duration = from_path(path);
+    assert!(duration.is_err());
 }
