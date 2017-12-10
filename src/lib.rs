@@ -167,9 +167,41 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
 }
 
 #[test]
-fn it_works() {
+fn constant_bitrate_320() {
     use std::path::Path;
-    let path = Path::new("vulture.mp3");
-    let duration = get_file_duration(path);
-    println!("{:?}", duration);
+    let path = Path::new("test/CBR320.mp3");
+    let duration = get_file_duration(path).unwrap();
+    assert_eq!(398, duration.as_secs())
+}
+
+#[test]
+fn variable_bitrate_v0() {
+    use std::path::Path;
+    let path = Path::new("test/VBR0.mp3");
+    let duration = get_file_duration(path).unwrap();
+    assert_eq!(398, duration.as_secs())
+}
+
+#[test]
+fn variable_bitrate_v9() {
+    use std::path::Path;
+    let path = Path::new("test/VBR9.mp3");
+    let duration = get_file_duration(path).unwrap();
+    assert_eq!(398, duration.as_secs())
+}
+
+#[test]
+fn id3v1() {
+    use std::path::Path;
+    let path = Path::new("test/ID3v1.mp3");
+    let duration = get_file_duration(path).unwrap();
+    assert_eq!(398, duration.as_secs())
+}
+
+#[test]
+fn id3v2() {
+    use std::path::Path;
+    let path = Path::new("test/ID3v2.mp3");
+    let duration = get_file_duration(path).unwrap();
+    assert_eq!(398, duration.as_secs())
 }
