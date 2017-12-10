@@ -10,8 +10,18 @@ use std::time::Duration;
 
 #[derive(Debug, Fail)]
 enum MP3DurationError {
-    #[fail(display = "sample error")]
-    SampleError,
+    #[fail(display = "Invalid MPEG version")]
+    ForbiddenVersion,
+    #[fail(display = "Invalid MPEG Layer (0)")]
+    ForbiddenLayer,
+    #[fail(display = "Invalid bitrate bits: {}", bitrate)]
+    InvalidBitrate { bitrate: u8, },
+    #[fail(display = "Invalid sampling rate bits: {}", sampling_rate)]
+    InvalidSamplingRate { sampling_rate: u8, },
+    #[fail(display = "Unexpected frame, header: {}", header)]
+    UnexpectedFrame {
+        header: u32,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,24 +73,24 @@ static SAMPLES_PER_FRAME: [[u32; 4]; 3] = [
 
 fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u32, Error> {
     if encoded_bitrate <= 0 || encoded_bitrate >= 15 {
-        bail!("Bad bitrate");
+        bail!(MP3DurationError::InvalidBitrate{ bitrate: encoded_bitrate });
     }
     if layer == Layer::NotDefined {
-        bail!("Bad layer");
+        bail!(MP3DurationError::ForbiddenLayer);
     }
     Ok(1000 * BIT_RATES[version as usize][layer as usize][encoded_bitrate as usize])
 }
 
 fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32, Error> {
     if encoded_sampling_rate >= 3 {
-        bail!("Bad sampling rate");
+        bail!(MP3DurationError::InvalidSamplingRate{ sampling_rate: encoded_sampling_rate });
     }
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
 
 fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
     if layer == Layer::NotDefined {
-        bail!("Bad layer");
+        bail!(MP3DurationError::ForbiddenLayer);
     }
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
@@ -132,7 +142,7 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
 
             let version = match (header >> 19) & 0b11 {
                 0 => Version::Mpeg25,
-                1 => bail!("Invalid MPEG version"),
+                1 => bail!(MP3DurationError::ForbiddenVersion),
                 2 => Version::Mpeg2,
                 3 => Version::Mpeg1,
                 _ => unreachable!(),
@@ -160,7 +170,7 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
             continue;
         }
 
-        bail!("Unexpected frame");
+        bail!(MP3DurationError::UnexpectedFrame{ header: header });
     }
 
     Ok(duration)
