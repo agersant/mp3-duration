@@ -197,11 +197,8 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
                 _ => unreachable!(),
             };
 
-            let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
             let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
             let num_samples = get_samples_per_frame(version, layer)?;
-            let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding;
 
             let xing_offset = get_side_information_size(version, mode)?;
             let mut xing_buffer = [0; 12];
@@ -224,10 +221,15 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
                 }
             }
 
+            let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
+            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding;
             file.seek(SeekFrom::Current(frame_length as i64 - buffer.len() as i64 -
                                         xing_offset as i64 -
                                         xing_buffer.len() as i64))?;
+
+            let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             duration = duration + Duration::new(0, frame_duration as u32);
+
             continue;
         }
 
