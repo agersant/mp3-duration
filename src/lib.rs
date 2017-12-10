@@ -148,14 +148,13 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
             let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
             let num_samples = get_samples_per_frame(layer)?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-
             let frame_length = if layer == Layer::Layer1 {
                 ( 12 * bitrate / sampling_rate + padding ) * 4
             } else {
                 144 * bitrate / sampling_rate + padding
-            } - 4; // 4 bytes already read
-            file.seek(SeekFrom::Current(frame_length as i64))?;
+            } - 4; // header already read
 
+            file.seek(SeekFrom::Current(frame_length as i64))?;
             duration = duration + Duration::new(0, frame_duration as u32);
             continue;
         }
