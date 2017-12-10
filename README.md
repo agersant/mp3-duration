@@ -1,4 +1,4 @@
-#mp3-duration
+# mp3-duration
 
 This crate has only one purpose: determining the playback duration of mp3 files.
 
