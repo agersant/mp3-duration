@@ -95,6 +95,20 @@ fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
 
+/// Measures the duration of a file.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use mp3_duration;
+///
+/// let path = Path::new("test/source.mp3");
+/// let mut file = File::open(path).unwrap();
+/// let duration = mp3_duration::from_file(&mut file).unwrap();
+/// println!("File duration: {:?}", duration);
+/// ```
 pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
     where T: Read + Seek
 {
@@ -175,6 +189,18 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
     Ok(duration)
 }
 
+/// Measures the duration of a file.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use mp3_duration;
+///
+/// let path = Path::new("test/source.mp3");
+/// let duration = mp3_duration::from_path(&path).unwrap();
+/// println!("File duration: {:?}", duration);
+/// ```
 pub fn from_path<P>(path: P) -> Result<Duration, Error>
     where P: AsRef<Path>
 {
@@ -184,7 +210,6 @@ pub fn from_path<P>(path: P) -> Result<Duration, Error>
 
 #[test]
 fn constant_bitrate_320() {
-    use std::path::Path;
     let path = Path::new("test/CBR320.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
@@ -192,7 +217,6 @@ fn constant_bitrate_320() {
 
 #[test]
 fn variable_bitrate_v0() {
-    use std::path::Path;
     let path = Path::new("test/VBR0.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
@@ -200,7 +224,6 @@ fn variable_bitrate_v0() {
 
 #[test]
 fn variable_bitrate_v9() {
-    use std::path::Path;
     let path = Path::new("test/VBR9.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
@@ -208,7 +231,6 @@ fn variable_bitrate_v9() {
 
 #[test]
 fn id3v1() {
-    use std::path::Path;
     let path = Path::new("test/ID3v1.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
@@ -216,7 +238,6 @@ fn id3v1() {
 
 #[test]
 fn id3v2() {
-    use std::path::Path;
     let path = Path::new("test/ID3v2.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs())
