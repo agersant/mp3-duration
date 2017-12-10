@@ -15,13 +15,11 @@ enum MP3DurationError {
     #[fail(display = "Invalid MPEG Layer (0)")]
     ForbiddenLayer,
     #[fail(display = "Invalid bitrate bits: {}", bitrate)]
-    InvalidBitrate { bitrate: u8, },
+    InvalidBitrate { bitrate: u8 },
     #[fail(display = "Invalid sampling rate bits: {}", sampling_rate)]
-    InvalidSamplingRate { sampling_rate: u8, },
+    InvalidSamplingRate { sampling_rate: u8 },
     #[fail(display = "Unexpected frame, header: {}", header)]
-    UnexpectedFrame {
-        header: u32,
-    }
+    UnexpectedFrame { header: u32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -37,6 +35,14 @@ enum Layer {
     Layer1,
     Layer2,
     Layer3,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    Stereo,
+    JointStereo,
+    DualChannel,
+    Mono,
 }
 
 static BIT_RATES: [[[u32; 16]; 4]; 3] = [[
@@ -71,9 +77,15 @@ static SAMPLES_PER_FRAME: [[u32; 4]; 3] = [
     [0, 384, 1152, 576],    // Mpeg25
 ];
 
+static SIDE_INFORMATION_SIZES: [[u32; 4]; 3] = [
+    [32, 32, 32, 17],   // Mpeg1
+    [17, 17, 17, 9],    // Mpeg2
+    [17, 17, 17, 9],    // Mpeg25
+];
+
 fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u32, Error> {
     if encoded_bitrate <= 0 || encoded_bitrate >= 15 {
-        bail!(MP3DurationError::InvalidBitrate{ bitrate: encoded_bitrate });
+        bail!(MP3DurationError::InvalidBitrate { bitrate: encoded_bitrate });
     }
     if layer == Layer::NotDefined {
         bail!(MP3DurationError::ForbiddenLayer);
@@ -83,7 +95,7 @@ fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u3
 
 fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32, Error> {
     if encoded_sampling_rate >= 3 {
-        bail!(MP3DurationError::InvalidSamplingRate{ sampling_rate: encoded_sampling_rate });
+        bail!(MP3DurationError::InvalidSamplingRate { sampling_rate: encoded_sampling_rate });
     }
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
@@ -93,6 +105,10 @@ fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
         bail!(MP3DurationError::ForbiddenLayer);
     }
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
+}
+
+fn get_side_information_size(version: Version, mode: Mode) -> Result<u32, Error> {
+    Ok(SIDE_INFORMATION_SIZES[version as usize][mode as usize])
 }
 
 /// Measures the duration of a file.
@@ -129,7 +145,7 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
         // ID3v1 frame
         let is_id3v1 = buffer[0] == 'T' as u8 && buffer[1] == 'A' as u8 && buffer[2] == 'G' as u8;
         if is_id3v1 {
-            file.seek(SeekFrom::Current(124))?; // 4 bytes already read
+            file.seek(SeekFrom::Current(128 - buffer.len() as i64))?;
             continue;
         }
 
@@ -172,18 +188,50 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
             let encoded_bitrate = (header >> 12) & 0b1111;
             let encoded_sampling_rate = (header >> 10) & 0b11;
             let padding = if 0 != ((header >> 9) & 1) { 1 } else { 0 };
+
+            let mode = match (header >> 6) & 0b11 {
+                0 => Mode::Stereo,
+                1 => Mode::JointStereo,
+                2 => Mode::DualChannel,
+                3 => Mode::Mono,
+                _ => unreachable!(),
+            };
+
             let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
             let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
             let num_samples = get_samples_per_frame(version, layer)?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding - 4;
+            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding;
 
-            file.seek(SeekFrom::Current(frame_length as i64))?;
+            let xing_offset = get_side_information_size(version, mode)?;
+            let mut xing_buffer = [0; 12];
+            file.seek(SeekFrom::Current(xing_offset as i64))?;
+            file.read_exact(&mut xing_buffer)?;
+            let is_xing = xing_buffer[0] == 'X' as u8 && xing_buffer[1] == 'i' as u8 &&
+                          xing_buffer[2] == 'n' as u8 &&
+                          xing_buffer[3] == 'g' as u8;
+            let is_info = xing_buffer[0] == 'I' as u8 && xing_buffer[1] == 'n' as u8 &&
+                          xing_buffer[2] == 'f' as u8 &&
+                          xing_buffer[3] == 'o' as u8;
+            if is_xing || is_info {
+                let has_frames = 0 != (xing_buffer[7] & 1);
+                if has_frames {
+                    let num_frames = (xing_buffer[8] as u32) << 24 | (xing_buffer[9] as u32) << 16 |
+                                     (xing_buffer[10] as u32) << 8 |
+                                     xing_buffer[11] as u32;
+                    return Ok(Duration::from_secs(num_frames as u64 * num_samples as u64 /
+                                                  sampling_rate as u64));
+                }
+            }
+
+            file.seek(SeekFrom::Current(frame_length as i64 - buffer.len() as i64 -
+                                        xing_offset as i64 -
+                                        xing_buffer.len() as i64))?;
             duration = duration + Duration::new(0, frame_duration as u32);
             continue;
         }
 
-        bail!(MP3DurationError::UnexpectedFrame{ header: header });
+        bail!(MP3DurationError::UnexpectedFrame { header: header });
     }
 
     Ok(duration)
@@ -209,21 +257,21 @@ pub fn from_path<P>(path: P) -> Result<Duration, Error>
 }
 
 #[test]
-fn constant_bitrate_320() {
+fn lame_398_constant_bitrate_320() {
     let path = Path::new("test/CBR320.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
 }
 
 #[test]
-fn variable_bitrate_v0() {
+fn lame_398_variable_bitrate_v0() {
     let path = Path::new("test/VBR0.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
 }
 
 #[test]
-fn variable_bitrate_v9() {
+fn lame_398_variable_bitrate_v9() {
     let path = Path::new("test/VBR9.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
