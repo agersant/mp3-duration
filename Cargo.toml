@@ -1,0 +1,7 @@
+[package]
+name = "mp3-duration"
+version = "0.1.0"
+authors = ["Antoine Gersant <antoine.gersant@lesforges.org>"]
+
+[dependencies]
+failure = "0.1.1"
