@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/agersant/mp3-duration.svg?branch=master)](https://travis-ci.org/agersant/mp3-duration)
+
 # mp3-duration
 
 This crate has only one purpose: determining the playback duration of mp3 files.
