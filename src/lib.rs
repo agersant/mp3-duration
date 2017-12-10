@@ -55,7 +55,11 @@ static SAMPLING_RATES: [[u32; 4]; 3] = [
     [11025, 12000, 8000, 0],    // Mpeg25
 ];
 
-static SAMPLES_PER_FRAME: [u32; 4] = [0, 384, 1152, 1152];
+static SAMPLES_PER_FRAME: [[u32; 4]; 3] = [
+    [0, 384, 1152, 1152],   // Mpeg1
+    [0, 384, 1152, 576],    // Mpeg2
+    [0, 384, 1152, 576],    // Mpeg25
+];
 
 fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u32, Error> {
     if encoded_bitrate <= 0 || encoded_bitrate >= 15 {
@@ -74,11 +78,11 @@ fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32,
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
 
-fn get_samples_per_frame(layer: Layer) -> Result<u32, Error> {
+fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
     if layer == Layer::NotDefined {
         bail!("Bad layer");
     }
-    Ok(SAMPLES_PER_FRAME[layer as usize])
+    Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
 
 pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
@@ -147,13 +151,9 @@ pub fn get_file_duration<P>(path: P) -> Result<Duration, Error>
             let padding = if 0 != ((header >> 9) & 1) { 1 } else { 0 };
             let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
             let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
-            let num_samples = get_samples_per_frame(layer)?;
+            let num_samples = get_samples_per_frame(version, layer)?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-            let frame_length = if layer == Layer::Layer1 {
-                (12 * bitrate / sampling_rate + padding) * 4
-            } else {
-                144 * bitrate / sampling_rate + padding
-            } - 4; // header already read
+            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding - 4;
 
             file.seek(SeekFrom::Current(frame_length as i64))?;
             duration = duration + Duration::new(0, frame_duration as u32);
