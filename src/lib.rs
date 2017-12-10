@@ -3,7 +3,7 @@ extern crate failure;
 
 use failure::Error;
 use std::io::prelude::*;
-use std::io::SeekFrom;
+use std::io::BufReader;
 use std::fs::File;
 use std::path::Path;
 use std::time::Duration;
@@ -111,28 +111,22 @@ fn get_side_information_size(version: Version, mode: Mode) -> Result<u32, Error>
     Ok(SIDE_INFORMATION_SIZES[version as usize][mode as usize])
 }
 
-/// Measures the duration of a file.
-///
-/// # Examples
-///
-/// ```
-/// use std::path::Path;
-/// use std::fs::File;
-/// use mp3_duration;
-///
-/// let path = Path::new("test/source.mp3");
-/// let mut file = File::open(path).unwrap();
-/// let duration = mp3_duration::from_file(&mut file).unwrap();
-/// println!("File duration: {:?}", duration);
-/// ```
-pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
-    where T: Read + Seek
+fn skip<T>(reader: &mut T, dump: &mut Vec<u8>, advance: usize) -> Result<(), std::io::Error>
+    where T: Read
+{
+    dump.resize(advance, 0);
+    reader.read_exact(&mut dump[..])
+}
+
+fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
+    where T: Read
 {
     let mut buffer = [0; 4];
+    let mut dump = vec![0; 16 * 1024];
 
     let mut duration = Duration::from_secs(0);
     loop {
-        match file.read_exact(&mut buffer[..]) {
+        match reader.read_exact(&mut buffer[..]) {
             Ok(_) => (),
             Err(e) => {
                 match e.kind() {
@@ -145,7 +139,7 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
         // ID3v1 frame
         let is_id3v1 = buffer[0] == 'T' as u8 && buffer[1] == 'A' as u8 && buffer[2] == 'G' as u8;
         if is_id3v1 {
-            file.seek(SeekFrom::Current(128 - buffer.len() as i64))?;
+            skip(reader, &mut dump, 128 - buffer.len())?;
             continue;
         }
 
@@ -153,13 +147,13 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
         let is_id3v2 = buffer[0] == 'I' as u8 && buffer[1] == 'D' as u8 && buffer[2] == '3' as u8;
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
-            file.read_exact(&mut id3v2)?;
+            reader.read_exact(&mut id3v2)?;
             let flags = id3v2[1];
-            let footer_size = if 0 != (flags & 0b00010000) { 10 } else { 0 };
-            let tag_size = (id3v2[5] as u32) | ((id3v2[4] as u32) << 7) |
-                           ((id3v2[3] as u32) << 14) |
-                           ((id3v2[2] as u32) << 21);
-            file.seek(SeekFrom::Current(tag_size as i64 + footer_size))?;
+            let footer_size: usize = if 0 != (flags & 0b00010000) { 10 } else { 0 };
+            let tag_size: usize =
+                ((id3v2[5] as u32) | ((id3v2[4] as u32) << 7) | ((id3v2[3] as u32) << 14) |
+                 ((id3v2[2] as u32) << 21)) as usize;
+            skip(reader, &mut dump, tag_size + footer_size)?;
             continue;
         }
 
@@ -200,10 +194,10 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
             let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
             let num_samples = get_samples_per_frame(version, layer)?;
 
-            let xing_offset = get_side_information_size(version, mode)?;
+            let xing_offset = get_side_information_size(version, mode)? as usize;
             let mut xing_buffer = [0; 12];
-            file.seek(SeekFrom::Current(xing_offset as i64))?;
-            file.read_exact(&mut xing_buffer)?;
+            reader.read_exact(&mut dump[..xing_offset])?;
+            reader.read_exact(&mut xing_buffer)?;
             let is_xing = xing_buffer[0] == 'X' as u8 && xing_buffer[1] == 'i' as u8 &&
                           xing_buffer[2] == 'n' as u8 &&
                           xing_buffer[3] == 'g' as u8;
@@ -222,11 +216,12 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
             }
 
             let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
-            let frame_length = num_samples / 8 * bitrate / sampling_rate + padding;
-            file.seek(SeekFrom::Current(frame_length as i64 - buffer.len() as i64 -
-                                        xing_offset as i64 -
-                                        xing_buffer.len() as i64))?;
+            let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
 
+
+            skip(reader,
+                 &mut dump,
+                 frame_length - buffer.len() - xing_offset - xing_buffer.len())?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             duration = duration + Duration::new(0, frame_duration as u32);
 
@@ -237,6 +232,25 @@ pub fn from_file<T>(file: &mut T) -> Result<Duration, Error>
     }
 
     Ok(duration)
+}
+
+/// Measures the duration of a file.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use mp3_duration;
+///
+/// let path = Path::new("test/source.mp3");
+/// let mut file = File::open(path).unwrap();
+/// let duration = mp3_duration::from_file(&mut file).unwrap();
+/// println!("File duration: {:?}", duration);
+/// ```
+pub fn from_file(file: &mut File) -> Result<Duration, Error> {
+    let mut reader = BufReader::new(file);
+    from_read(&mut reader)
 }
 
 /// Measures the duration of a file.
@@ -289,6 +303,13 @@ fn id3v1() {
 #[test]
 fn id3v2() {
     let path = Path::new("test/ID3v2.mp3");
+    let duration = from_path(path).unwrap();
+    assert_eq!(398, duration.as_secs());
+}
+
+#[test]
+fn id3v2_with_image() {
+    let path = Path::new("test/ID3v2WithImage.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
 }
