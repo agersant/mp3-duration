@@ -1,3 +1,4 @@
+[![Crates.io](https://img.shields.io/crates/v/mp3-duration.svg)](https://crates.io/crates/mp3-duration)
 [![Build Status](https://travis-ci.org/agersant/mp3-duration.svg?branch=master)](https://travis-ci.org/agersant/mp3-duration)
 
 # mp3-duration
