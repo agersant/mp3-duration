@@ -12,8 +12,8 @@ use std::fs::File;
 use mp3_duration;
 
 let path = Path::new("music.mp3");
-let mut file = File::open(path).unwrap();
-let duration = mp3_duration::from_file(&mut file).unwrap();
+let file = File::open(path).unwrap();
+let duration = mp3_duration::from_file(&file).unwrap();
 println!("File duration: {:?}", duration);
 ```
 
