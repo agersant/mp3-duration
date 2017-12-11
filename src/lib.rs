@@ -121,12 +121,12 @@ fn skip<T>(reader: &mut T, dump: &mut Vec<u8>, advance: usize) -> Result<(), std
 fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
     where T: Read
 {
-    let mut buffer = [0; 4];
+    let mut header_buffer = [0; 4];
     let mut dump = vec![0; 16 * 1024];
 
     let mut duration = Duration::from_secs(0);
     loop {
-        match reader.read_exact(&mut buffer[..]) {
+        match reader.read_exact(&mut header_buffer[..]) {
             Ok(_) => (),
             Err(e) => {
                 match e.kind() {
@@ -137,8 +137,8 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
         };
 
         // MPEG frame
-        let header = (buffer[0] as u32) << 24 | (buffer[1] as u32) << 16 |
-                     (buffer[2] as u32) << 8 | buffer[3] as u32;
+        let header = (header_buffer[0] as u32) << 24 | (header_buffer[1] as u32) << 16 |
+                     (header_buffer[2] as u32) << 8 | header_buffer[3] as u32;
         let is_mp3 = header >> 21 == 0x7FF;
         if is_mp3 {
 
@@ -199,7 +199,7 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
 
             skip(reader,
                  &mut dump,
-                 frame_length - buffer.len() - xing_offset - xing_buffer.len())?;
+                 frame_length - header_buffer.len() - xing_offset - xing_buffer.len())?;
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             duration = duration + Duration::new(0, frame_duration as u32);
 
@@ -207,7 +207,7 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
         }
 
         // ID3v2 frame
-        let is_id3v2 = buffer[0] == 'I' as u8 && buffer[1] == 'D' as u8 && buffer[2] == '3' as u8;
+        let is_id3v2 = header_buffer[0] == 'I' as u8 && header_buffer[1] == 'D' as u8 && header_buffer[2] == '3' as u8;
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
             reader.read_exact(&mut id3v2)?;
@@ -221,9 +221,9 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
         }
 
         // ID3v1 frame
-        let is_id3v1 = buffer[0] == 'T' as u8 && buffer[1] == 'A' as u8 && buffer[2] == 'G' as u8;
+        let is_id3v1 = header_buffer[0] == 'T' as u8 && header_buffer[1] == 'A' as u8 && header_buffer[2] == 'G' as u8;
         if is_id3v1 {
-            skip(reader, &mut dump, 128 - buffer.len())?;
+            skip(reader, &mut dump, 128 - header_buffer.len())?;
             continue;
         }
 
