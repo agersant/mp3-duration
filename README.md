@@ -8,12 +8,10 @@ This crate has only one purpose: determining the playback duration of mp3 files.
 
 ```rust
 use std::path::Path;
-use std::fs::File;
 use mp3_duration;
 
 let path = Path::new("music.mp3");
-let file = File::open(path).unwrap();
-let duration = mp3_duration::from_file(&file).unwrap();
+let duration = mp3_duration::from_path(&path).unwrap();
 println!("File duration: {:?}", duration);
 ```
 
