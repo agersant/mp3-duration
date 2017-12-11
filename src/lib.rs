@@ -248,7 +248,7 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
 /// let duration = mp3_duration::from_file(&mut file).unwrap();
 /// println!("File duration: {:?}", duration);
 /// ```
-pub fn from_file(file: &mut File) -> Result<Duration, Error> {
+pub fn from_file(file: &File) -> Result<Duration, Error> {
     let mut reader = BufReader::new(file);
     from_read(&mut reader)
 }
@@ -268,8 +268,8 @@ pub fn from_file(file: &mut File) -> Result<Duration, Error> {
 pub fn from_path<P>(path: P) -> Result<Duration, Error>
     where P: AsRef<Path>
 {
-    let mut file = File::open(path)?;
-    from_file(&mut file)
+    let file = File::open(path)?;
+    from_file(&file)
 }
 
 #[test]
