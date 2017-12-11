@@ -243,8 +243,8 @@ fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
 /// use mp3_duration;
 ///
 /// let path = Path::new("test/source.mp3");
-/// let mut file = File::open(path).unwrap();
-/// let duration = mp3_duration::from_file(&mut file).unwrap();
+/// let file = File::open(path).unwrap();
+/// let duration = mp3_duration::from_file(&file).unwrap();
 /// println!("File duration: {:?}", duration);
 /// ```
 pub fn from_file(file: &File) -> Result<Duration, Error> {
