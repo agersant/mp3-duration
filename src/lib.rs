@@ -118,7 +118,24 @@ fn skip<T>(reader: &mut T, dump: &mut Vec<u8>, advance: usize) -> Result<(), std
     reader.read_exact(&mut dump[..])
 }
 
-fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
+
+/// Measures the duration of a mp3 file contained in any struct implementing Read.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use mp3_duration;
+///
+/// let path = Path::new("test/source.mp3");
+/// let file = File::open(path).unwrap();
+/// let mut reader = BufReader::new(file);
+/// let duration = mp3_duration::from_read(&mut reader).unwrap();
+/// println!("File duration: {:?}", duration);
+/// ```
+pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
     where T: Read
 {
     let mut header_buffer = [0; 4];
