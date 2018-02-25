@@ -145,12 +145,8 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
     loop {
         match reader.read_exact(&mut header_buffer[..]) {
             Ok(_) => (),
-            Err(e) => {
-                match e.kind() {
-                    std::io::ErrorKind::UnexpectedEof => break,
-                    _ => bail!(e),
-                }
-            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => bail!(e),
         };
 
         // MPEG frame
@@ -192,8 +188,16 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
 
             let xing_offset = get_side_information_size(version, mode)? as usize;
             let mut xing_buffer = [0; 12];
-            reader.read_exact(&mut dump[..xing_offset])?;
-            reader.read_exact(&mut xing_buffer)?;
+            match reader.read_exact(&mut dump[..xing_offset]) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+            match reader.read_exact(&mut xing_buffer) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
             let is_xing = xing_buffer[0] == 'X' as u8 && xing_buffer[1] == 'i' as u8 &&
                           xing_buffer[2] == 'n' as u8 &&
                           xing_buffer[3] == 'g' as u8;
@@ -214,9 +218,14 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
             let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
             let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
 
-            skip(reader,
-                 &mut dump,
-                 frame_length - header_buffer.len() - xing_offset - xing_buffer.len())?;
+            match skip(reader,
+                       &mut dump,
+                       frame_length - header_buffer.len() - xing_offset - xing_buffer.len()) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             duration = duration + Duration::new(0, frame_duration as u32);
 
@@ -224,23 +233,37 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
         }
 
         // ID3v2 frame
-        let is_id3v2 = header_buffer[0] == 'I' as u8 && header_buffer[1] == 'D' as u8 && header_buffer[2] == '3' as u8;
+        let is_id3v2 = header_buffer[0] == 'I' as u8 && header_buffer[1] == 'D' as u8 &&
+                       header_buffer[2] == '3' as u8;
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
-            reader.read_exact(&mut id3v2)?;
+            match reader.read_exact(&mut id3v2) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
             let flags = id3v2[1];
             let footer_size: usize = if 0 != (flags & 0b00010000) { 10 } else { 0 };
             let tag_size: usize =
                 ((id3v2[5] as u32) | ((id3v2[4] as u32) << 7) | ((id3v2[3] as u32) << 14) |
                  ((id3v2[2] as u32) << 21)) as usize;
-            skip(reader, &mut dump, tag_size + footer_size)?;
+            match skip(reader, &mut dump, tag_size + footer_size) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
             continue;
         }
 
         // ID3v1 frame
-        let is_id3v1 = header_buffer[0] == 'T' as u8 && header_buffer[1] == 'A' as u8 && header_buffer[2] == 'G' as u8;
+        let is_id3v1 = header_buffer[0] == 'T' as u8 && header_buffer[1] == 'A' as u8 &&
+                       header_buffer[2] == 'G' as u8;
         if is_id3v1 {
-            skip(reader, &mut dump, 128 - header_buffer.len())?;
+            match skip(reader, &mut dump, 128 - header_buffer.len()) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
             continue;
         }
 
@@ -335,4 +358,11 @@ fn bad_file() {
     let path = Path::new("test/piano.jpeg");
     let duration = from_path(path);
     assert!(duration.is_err());
+}
+
+#[test]
+fn truncated() {
+    let path = Path::new("test/Truncated.mp3");
+    let duration = from_path(path).unwrap();
+    assert_eq!(206, duration.as_secs());
 }
