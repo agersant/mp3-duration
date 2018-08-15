@@ -210,8 +210,12 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
                     let num_frames = (xing_buffer[8] as u32) << 24 | (xing_buffer[9] as u32) << 16 |
                                      (xing_buffer[10] as u32) << 8 |
                                      xing_buffer[11] as u32;
-                    return Ok(Duration::from_secs(num_frames as u64 * num_samples as u64 /
-                                                  sampling_rate as u64));
+                    let rate = sampling_rate as u64;
+                    let billion = 1000000000;
+                    let frames_x_samples = num_frames as u64 * num_samples as u64;
+                    let seconds = frames_x_samples / rate;
+                    let nanoseconds = (billion * frames_x_samples) / rate - billion * seconds;
+                    return Ok(Duration::new(seconds, nanoseconds as u32));
                 }
             }
 
