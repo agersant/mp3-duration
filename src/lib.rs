@@ -320,6 +320,8 @@ fn lame_398_constant_bitrate_320() {
     let path = Path::new("test/CBR320.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -327,6 +329,8 @@ fn lame_398_variable_bitrate_v0() {
     let path = Path::new("test/VBR0.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -334,6 +338,8 @@ fn lame_398_variable_bitrate_v9() {
     let path = Path::new("test/VBR9.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -341,6 +347,8 @@ fn id3v1() {
     let path = Path::new("test/ID3v1.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -348,6 +356,8 @@ fn id3v2() {
     let path = Path::new("test/ID3v2.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -355,6 +365,8 @@ fn id3v2_with_image() {
     let path = Path::new("test/ID3v2WithImage.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -369,4 +381,6 @@ fn truncated() {
     let path = Path::new("test/Truncated.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(206, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(7 * 100_000_000 < nanos && nanos < 8 * 100_000_000);
 }
