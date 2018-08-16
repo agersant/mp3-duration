@@ -210,8 +210,12 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
                     let num_frames = (xing_buffer[8] as u32) << 24 | (xing_buffer[9] as u32) << 16 |
                                      (xing_buffer[10] as u32) << 8 |
                                      xing_buffer[11] as u32;
-                    return Ok(Duration::from_secs(num_frames as u64 * num_samples as u64 /
-                                                  sampling_rate as u64));
+                    let rate = sampling_rate as u64;
+                    let billion = 1000000000;
+                    let frames_x_samples = num_frames as u64 * num_samples as u64;
+                    let seconds = frames_x_samples / rate;
+                    let nanoseconds = (billion * frames_x_samples) / rate - billion * seconds;
+                    return Ok(Duration::new(seconds, nanoseconds as u32));
                 }
             }
 
@@ -316,6 +320,8 @@ fn lame_398_constant_bitrate_320() {
     let path = Path::new("test/CBR320.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -323,6 +329,8 @@ fn lame_398_variable_bitrate_v0() {
     let path = Path::new("test/VBR0.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -330,6 +338,8 @@ fn lame_398_variable_bitrate_v9() {
     let path = Path::new("test/VBR9.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -337,6 +347,8 @@ fn id3v1() {
     let path = Path::new("test/ID3v1.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -344,6 +356,8 @@ fn id3v2() {
     let path = Path::new("test/ID3v2.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -351,6 +365,8 @@ fn id3v2_with_image() {
     let path = Path::new("test/ID3v2WithImage.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 * 100_000_000 < nanos && nanos < 4 * 100_000_000);
 }
 
 #[test]
@@ -365,4 +381,6 @@ fn truncated() {
     let path = Path::new("test/Truncated.mp3");
     let duration = from_path(path).unwrap();
     assert_eq!(206, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(7 * 100_000_000 < nanos && nanos < 8 * 100_000_000);
 }
