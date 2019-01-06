@@ -188,6 +188,7 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
 
             let xing_offset = get_side_information_size(version, mode)? as usize;
             let mut xing_buffer = [0; 12];
+            dump.resize(xing_offset, 0);
             match reader.read_exact(&mut dump[..xing_offset]) {
                 Ok(_) => (),
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
