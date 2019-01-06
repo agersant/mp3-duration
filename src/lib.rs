@@ -112,7 +112,7 @@ static SIDE_INFORMATION_SIZES: [[u32; 4]; 3] = [
 ];
 
 fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u32, Error> {
-    if encoded_bitrate <= 0 || encoded_bitrate >= 15 {
+    if encoded_bitrate >= 15 {
         bail!(MP3DurationError::InvalidBitrate {
             bitrate: encoded_bitrate
         });
@@ -249,7 +249,7 @@ where
                         | (xing_buffer[10] as u32) << 8
                         | xing_buffer[11] as u32;
                     let rate = sampling_rate as u64;
-                    let billion = 1000000000;
+                    let billion = 1_000_000_000;
                     let frames_x_samples = num_frames as u64 * num_samples as u64;
                     let seconds = frames_x_samples / rate;
                     let nanoseconds = (billion * frames_x_samples) / rate - billion * seconds;
@@ -271,7 +271,7 @@ where
             };
 
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-            duration = duration + Duration::new(0, frame_duration as u32);
+            duration += Duration::new(0, frame_duration as u32);
 
             continue;
         }
@@ -288,7 +288,7 @@ where
                 Err(e) => bail!(e),
             };
             let flags = id3v2[1];
-            let footer_size: usize = if 0 != (flags & 0b00010000) { 10 } else { 0 };
+            let footer_size: usize = if 0 != (flags & 0b0001_0000) { 10 } else { 0 };
             let tag_size: usize = ((id3v2[5] as u32)
                 | ((id3v2[4] as u32) << 7)
                 | ((id3v2[3] as u32) << 14)
