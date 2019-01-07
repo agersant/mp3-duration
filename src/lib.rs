@@ -414,6 +414,15 @@ fn id3v2_with_image() {
 }
 
 #[test]
+fn id3v2_empty() {
+    let path = Path::new("test/SineEmptyID3.mp3");
+    let duration = from_path(path).unwrap();
+    assert_eq!(1, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(0 < nanos && nanos < 1 * 100_000_000);
+}
+
+#[test]
 fn bad_file() {
     let path = Path::new("test/piano.jpeg");
     let duration = from_path(path);
