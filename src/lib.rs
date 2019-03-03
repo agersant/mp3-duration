@@ -176,7 +176,17 @@ where
 
     let mut duration = Duration::from_secs(0);
     loop {
-        match reader.read_exact(&mut header_buffer[..]) {
+        //skip over all 0x00 bytes (these are probably incorrectly added padding bytes for id3v2)
+        header_buffer[0] = 0;
+        while header_buffer[0] == 0{
+            match reader.read_exact(&mut header_buffer[0..1]) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+        }
+
+        match reader.read_exact(&mut header_buffer[1..]) {
             Ok(_) => (),
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => bail!(e),
