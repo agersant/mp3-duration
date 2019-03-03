@@ -314,6 +314,31 @@ where
             continue;
         }
 
+        // APEv2 frame
+        let is_ape_v2 = header_buffer[0] == 'A' as u8
+            && header_buffer[1] == 'P' as u8
+            && header_buffer[2] == 'E' as u8
+            && header_buffer[3] == 'T' as u8;
+        if is_ape_v2{
+            let mut ape_header = [0;12];
+            match reader.read_exact(&mut ape_header[..]) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+            let tag_size: usize = ((ape_header[8] as u32)
+                | ((ape_header[9] as u32) << 8)
+                | ((ape_header[10] as u32) << 16)
+                | ((ape_header[11] as u32) << 24)) as usize;
+            match skip(reader, &mut dump, tag_size + 16) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+            continue;
+
+        }
+
         bail!(MP3DurationError::UnexpectedFrame { header: header });
     }
 
