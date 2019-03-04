@@ -465,6 +465,15 @@ fn id3v2_empty() {
 }
 
 #[test]
+fn id3v2_bad_padding() {
+    let path = Path::new("test/ID3v2WithBadPadding.mp3");
+    let duration = from_path(path).unwrap();
+    assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 < nanos && nanos < 3 * 100_000_000);
+}
+
+#[test]
 fn apev2() {
     let path = Path::new("test/APEv2.mp3");
     let duration = from_path(path).unwrap();
