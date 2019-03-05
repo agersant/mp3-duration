@@ -1,6 +1,6 @@
 [package]
 name = "mp3-duration"
-version = "0.1.5"
+version = "0.1.6"
 edition = '2018'
 description = "A library for measuring the playback duration of mp3 files"
 repository = "https://github.com/agersant/mp3-duration"
