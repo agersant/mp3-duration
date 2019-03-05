@@ -1,15 +1,15 @@
 #[macro_use]
 extern crate failure;
 
-use failure::Error;
 use std::fs::File;
+use std::io;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Fail)]
-enum MP3DurationError {
+pub enum MP3DurationError {
     #[fail(display = "Invalid MPEG version")]
     ForbiddenVersion,
     #[fail(display = "Invalid MPEG Layer (0)")]
@@ -18,8 +18,29 @@ enum MP3DurationError {
     InvalidBitrate { bitrate: u8 },
     #[fail(display = "Invalid sampling rate bits: {}", sampling_rate)]
     InvalidSamplingRate { sampling_rate: u8 },
-    #[fail(display = "Unexpected frame, header: {}", header)]
-    UnexpectedFrame { header: u32 },
+    #[fail(
+        display = "Unexpected frame header 0x{:X} at offset {} (0x{1:X}); measured duration up to here: {:?}",
+        header, offset, at_duration
+    )]
+    UnexpectedFrame {
+        header: u32,
+        offset: usize,
+        at_duration: Duration,
+    },
+    #[fail(display = "Unexpected IO Error: {}", _0)]
+    IOError(#[fail(cause)] io::Error),
+}
+
+impl From<io::Error> for MP3DurationError {
+    fn from(e: io::Error) -> Self {
+        MP3DurationError::IOError(e)
+    }
+}
+
+macro_rules! bail {
+    ($err:expr) => {
+        return Err($err.into());
+    };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,7 +132,11 @@ static SIDE_INFORMATION_SIZES: [[u32; 4]; 3] = [
     [17, 17, 17, 9],  // Mpeg25
 ];
 
-fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u32, Error> {
+fn get_bitrate(
+    version: Version,
+    layer: Layer,
+    encoded_bitrate: u8,
+) -> Result<u32, MP3DurationError> {
     if encoded_bitrate >= 15 {
         bail!(MP3DurationError::InvalidBitrate {
             bitrate: encoded_bitrate
@@ -123,7 +148,7 @@ fn get_bitrate(version: Version, layer: Layer, encoded_bitrate: u8) -> Result<u3
     Ok(1000 * BIT_RATES[version as usize][layer as usize][encoded_bitrate as usize])
 }
 
-fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32, Error> {
+fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32, MP3DurationError> {
     if encoded_sampling_rate >= 3 {
         bail!(MP3DurationError::InvalidSamplingRate {
             sampling_rate: encoded_sampling_rate
@@ -132,14 +157,14 @@ fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32,
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
 
-fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, Error> {
+fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, MP3DurationError> {
     if layer == Layer::NotDefined {
         bail!(MP3DurationError::ForbiddenLayer);
     }
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
 
-fn get_side_information_size(version: Version, mode: Mode) -> Result<u32, Error> {
+fn get_side_information_size(version: Version, mode: Mode) -> Result<u32, MP3DurationError> {
     Ok(SIDE_INFORMATION_SIZES[version as usize][mode as usize])
 }
 
@@ -167,13 +192,14 @@ where
 /// let duration = mp3_duration::from_read(&mut reader).unwrap();
 /// println!("File duration: {:?}", duration);
 /// ```
-pub fn from_read<T>(reader: &mut T) -> Result<Duration, Error>
+pub fn from_read<T>(reader: &mut T) -> Result<Duration, MP3DurationError>
 where
     T: Read,
 {
     let mut header_buffer = [0; 4];
     let mut dump = vec![0; 16 * 1024];
 
+    let mut bytes_read = 0;
     let mut duration = Duration::from_secs(0);
     loop {
         // Skip over all 0x00 bytes (these are probably incorrectly added padding bytes for id3v2)
@@ -184,6 +210,7 @@ where
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
                 Err(e) => bail!(e),
             };
+            bytes_read += 1;
         }
 
         match reader.read_exact(&mut header_buffer[1..]) {
@@ -191,6 +218,7 @@ where
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => bail!(e),
         };
+        bytes_read += 3;
 
         // MPEG frame
         let header = (header_buffer[0] as u32) << 24
@@ -279,6 +307,7 @@ where
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
                 Err(e) => bail!(e),
             };
+            bytes_read += frame_length - header_buffer.len();
 
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
             duration += Duration::new(0, frame_duration as u32);
@@ -308,6 +337,7 @@ where
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
                 Err(e) => bail!(e),
             };
+            bytes_read += id3v2.len() + tag_size + footer_size;
             continue;
         }
 
@@ -321,6 +351,7 @@ where
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
                 Err(e) => bail!(e),
             };
+            bytes_read += 128 - header_buffer.len();
             continue;
         }
 
@@ -341,7 +372,11 @@ where
                 && ape_header[2] == 'E' as u8
                 && ape_header[3] == 'X' as u8;
             if !is_really_ape_v2 {
-                bail!(MP3DurationError::UnexpectedFrame { header: header });
+                bail!(MP3DurationError::UnexpectedFrame {
+                    header: header,
+                    offset: bytes_read - header_buffer.len(),
+                    at_duration: duration
+                });
             }
             let tag_size: usize = ((ape_header[8] as u32)
                 | ((ape_header[9] as u32) << 8)
@@ -352,10 +387,15 @@ where
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
                 Err(e) => bail!(e),
             };
+            bytes_read += ape_header.len() + tag_size + 16;
             continue;
         }
 
-        bail!(MP3DurationError::UnexpectedFrame { header: header });
+        bail!(MP3DurationError::UnexpectedFrame {
+            header: header,
+            offset: bytes_read - header_buffer.len(),
+            at_duration: duration
+        });
     }
 
     Ok(duration)
@@ -375,7 +415,7 @@ where
 /// let duration = mp3_duration::from_file(&file).unwrap();
 /// println!("File duration: {:?}", duration);
 /// ```
-pub fn from_file(file: &File) -> Result<Duration, Error> {
+pub fn from_file(file: &File) -> Result<Duration, MP3DurationError> {
     let mut reader = BufReader::new(file);
     from_read(&mut reader)
 }
@@ -392,7 +432,7 @@ pub fn from_file(file: &File) -> Result<Duration, Error> {
 /// let duration = mp3_duration::from_path(&path).unwrap();
 /// println!("File duration: {:?}", duration);
 /// ```
-pub fn from_path<P>(path: P) -> Result<Duration, Error>
+pub fn from_path<P>(path: P) -> Result<Duration, MP3DurationError>
 where
     P: AsRef<Path>,
 {
