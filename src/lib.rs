@@ -176,7 +176,17 @@ where
 
     let mut duration = Duration::from_secs(0);
     loop {
-        match reader.read_exact(&mut header_buffer[..]) {
+        // Skip over all 0x00 bytes (these are probably incorrectly added padding bytes for id3v2)
+        header_buffer[0] = 0;
+        while header_buffer[0] == 0 {
+            match reader.read_exact(&mut header_buffer[0..1]) {
+                Ok(_) => (),
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!(e),
+            };
+        }
+
+        match reader.read_exact(&mut header_buffer[1..]) {
             Ok(_) => (),
             Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => bail!(e),
@@ -319,8 +329,8 @@ where
             && header_buffer[1] == 'P' as u8
             && header_buffer[2] == 'E' as u8
             && header_buffer[3] == 'T' as u8;
-        if maybe_is_ape_v2{
-            let mut ape_header = [0;12];
+        if maybe_is_ape_v2 {
+            let mut ape_header = [0; 12];
             match reader.read_exact(&mut ape_header[..]) {
                 Ok(_) => (),
                 Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -330,7 +340,7 @@ where
                 && ape_header[1] == 'G' as u8
                 && ape_header[2] == 'E' as u8
                 && ape_header[3] == 'X' as u8;
-            if !is_really_ape_v2{
+            if !is_really_ape_v2 {
                 bail!(MP3DurationError::UnexpectedFrame { header: header });
             }
             let tag_size: usize = ((ape_header[8] as u32)
@@ -343,7 +353,6 @@ where
                 Err(e) => bail!(e),
             };
             continue;
-
         }
 
         bail!(MP3DurationError::UnexpectedFrame { header: header });
@@ -452,6 +461,15 @@ fn id3v2_empty() {
     assert_eq!(1, duration.as_secs());
     let nanos = duration.subsec_nanos();
     assert!(0 < nanos && nanos < 1 * 100_000_000);
+}
+
+#[test]
+fn id3v2_bad_padding() {
+    let path = Path::new("test/ID3v2WithBadPadding.mp3");
+    let duration = from_path(path).unwrap();
+    assert_eq!(398, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(2 < nanos && nanos < 3 * 100_000_000);
 }
 
 #[test]
