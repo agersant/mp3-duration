@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate failure;
 
+use core::fmt;
+use failure::Fail;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
@@ -8,38 +10,64 @@ use std::io::BufReader;
 use std::path::Path;
 use std::time::Duration;
 
+#[derive(Debug)]
+pub struct MP3DurationError {
+    pub kind: ErrorKind,
+    pub offset: usize,
+    pub at_duration: Duration,
+}
+
+impl fmt::Display for MP3DurationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{} at offset {} (0x{1:X}); measured duration up to here: {:?}",
+            self.kind, self.offset, self.at_duration
+        )
+    }
+}
+
+impl Fail for MP3DurationError {
+    // Delegate `cause` to ErrorKind
+    fn cause(&self) -> Option<&Fail> {
+        self.kind.cause()
+    }
+}
+
 #[derive(Debug, Fail)]
-pub enum MP3DurationError {
+pub enum ErrorKind {
     #[fail(display = "Invalid MPEG version")]
     ForbiddenVersion,
     #[fail(display = "Invalid MPEG Layer (0)")]
     ForbiddenLayer,
-    #[fail(display = "Invalid bitrate bits: {}", bitrate)]
+    #[fail(display = "Invalid bitrate bits: {0} (0b{0:b})", bitrate)]
     InvalidBitrate { bitrate: u8 },
-    #[fail(display = "Invalid sampling rate bits: {}", sampling_rate)]
+    #[fail(display = "Invalid sampling rate bits: {0} (0b{0:b})", sampling_rate)]
     InvalidSamplingRate { sampling_rate: u8 },
-    #[fail(
-        display = "Unexpected frame header 0x{:X} at offset {} (0x{1:X}); measured duration up to here: {:?}",
-        header, offset, at_duration
-    )]
-    UnexpectedFrame {
-        header: u32,
-        offset: usize,
-        at_duration: Duration,
-    },
+    #[fail(display = "Unexpected frame, header 0x{:X}", header)]
+    UnexpectedFrame { header: u32 },
+    #[fail(display = "Unexpected end of file")]
+    UnexpectedEOF,
     #[fail(display = "Unexpected IO Error: {}", _0)]
     IOError(#[fail(cause)] io::Error),
 }
 
-impl From<io::Error> for MP3DurationError {
+impl From<io::Error> for ErrorKind {
     fn from(e: io::Error) -> Self {
-        MP3DurationError::IOError(e)
+        match e.kind() {
+            io::ErrorKind::UnexpectedEof => ErrorKind::UnexpectedEOF,
+            _ => ErrorKind::IOError(e),
+        }
     }
 }
 
 macro_rules! bail {
-    ($err:expr) => {
-        return Err($err.into());
+    ($ctx:expr, $err:expr) => {
+        return Err(MP3DurationError {
+            kind: $err.into(),
+            offset: $ctx.0,
+            at_duration: $ctx.1,
+        });
     };
 }
 
@@ -136,30 +164,45 @@ fn get_bitrate(
     version: Version,
     layer: Layer,
     encoded_bitrate: u8,
+    ctx: (usize, Duration),
 ) -> Result<u32, MP3DurationError> {
     if encoded_bitrate >= 15 {
-        bail!(MP3DurationError::InvalidBitrate {
-            bitrate: encoded_bitrate
-        });
+        bail!(
+            ctx,
+            ErrorKind::InvalidBitrate {
+                bitrate: encoded_bitrate
+            }
+        );
     }
     if layer == Layer::NotDefined {
-        bail!(MP3DurationError::ForbiddenLayer);
+        bail!(ctx, ErrorKind::ForbiddenLayer);
     }
     Ok(1000 * BIT_RATES[version as usize][layer as usize][encoded_bitrate as usize])
 }
 
-fn get_sampling_rate(version: Version, encoded_sampling_rate: u8) -> Result<u32, MP3DurationError> {
+fn get_sampling_rate(
+    version: Version,
+    encoded_sampling_rate: u8,
+    ctx: (usize, Duration),
+) -> Result<u32, MP3DurationError> {
     if encoded_sampling_rate >= 3 {
-        bail!(MP3DurationError::InvalidSamplingRate {
-            sampling_rate: encoded_sampling_rate
-        });
+        bail!(
+            ctx,
+            ErrorKind::InvalidSamplingRate {
+                sampling_rate: encoded_sampling_rate
+            }
+        );
     }
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
 
-fn get_samples_per_frame(version: Version, layer: Layer) -> Result<u32, MP3DurationError> {
+fn get_samples_per_frame(
+    version: Version,
+    layer: Layer,
+    ctx: (usize, Duration),
+) -> Result<u32, MP3DurationError> {
     if layer == Layer::NotDefined {
-        bail!(MP3DurationError::ForbiddenLayer);
+        bail!(ctx, ErrorKind::ForbiddenLayer);
     }
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
@@ -207,16 +250,16 @@ where
         while header_buffer[0] == 0 {
             match reader.read_exact(&mut header_buffer[0..1]) {
                 Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => bail!((bytes_read, duration), e),
             };
             bytes_read += 1;
         }
 
         match reader.read_exact(&mut header_buffer[1..]) {
             Ok(_) => (),
-            Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => bail!(e),
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => bail!((bytes_read, duration), e),
         };
         bytes_read += 3;
 
@@ -229,7 +272,7 @@ where
         if is_mp3 {
             let version = match (header >> 19) & 0b11 {
                 0 => Version::Mpeg25,
-                1 => bail!(MP3DurationError::ForbiddenVersion),
+                1 => bail!((bytes_read, duration), ErrorKind::ForbiddenVersion),
                 2 => Version::Mpeg2,
                 3 => Version::Mpeg1,
                 _ => unreachable!(),
@@ -255,22 +298,22 @@ where
                 _ => unreachable!(),
             };
 
-            let sampling_rate = get_sampling_rate(version, encoded_sampling_rate as u8)?;
-            let num_samples = get_samples_per_frame(version, layer)?;
+            let sampling_rate =
+                get_sampling_rate(version, encoded_sampling_rate as u8, (bytes_read, duration))?;
+            let num_samples = get_samples_per_frame(version, layer, (bytes_read, duration))?;
 
             let xing_offset = get_side_information_size(version, mode)? as usize;
             let mut xing_buffer = [0; 12];
             dump.resize(xing_offset, 0);
-            match reader.read_exact(&mut dump[..xing_offset]) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
-            match reader.read_exact(&mut xing_buffer) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+
+            if let Err(e) = reader.read_exact(&mut dump[..xing_offset]) {
+                bail!((bytes_read, duration), e);
+            }
+
+            if let Err(e) = reader.read_exact(&mut xing_buffer) {
+                bail!((bytes_read + xing_offset, duration), e);
+            }
+
             let is_xing = xing_buffer[0] == 'X' as u8
                 && xing_buffer[1] == 'i' as u8
                 && xing_buffer[2] == 'n' as u8
@@ -295,18 +338,21 @@ where
                 }
             }
 
-            let bitrate = get_bitrate(version, layer, encoded_bitrate as u8)?;
+            let bitrate = get_bitrate(
+                version,
+                layer,
+                encoded_bitrate as u8,
+                (bytes_read, duration),
+            )?;
             let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
 
-            match skip(
+            if let Err(e) = skip(
                 reader,
                 &mut dump,
                 frame_length - header_buffer.len() - xing_offset - xing_buffer.len(),
             ) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+                bail!((bytes_read + xing_offset + xing_buffer.len(), duration), e);
+            }
             bytes_read += frame_length - header_buffer.len();
 
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
@@ -321,22 +367,18 @@ where
             && header_buffer[2] == '3' as u8;
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
-            match reader.read_exact(&mut id3v2) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+            if let Err(e) = reader.read_exact(&mut id3v2) {
+                bail!((bytes_read, duration), e);
+            }
             let flags = id3v2[1];
             let footer_size: usize = if 0 != (flags & 0b0001_0000) { 10 } else { 0 };
             let tag_size: usize = ((id3v2[5] as u32)
                 | ((id3v2[4] as u32) << 7)
                 | ((id3v2[3] as u32) << 14)
                 | ((id3v2[2] as u32) << 21)) as usize;
-            match skip(reader, &mut dump, tag_size + footer_size) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+            if let Err(e) = skip(reader, &mut dump, tag_size + footer_size) {
+                bail!((bytes_read + id3v2.len(), duration), e);
+            }
             bytes_read += id3v2.len() + tag_size + footer_size;
             continue;
         }
@@ -346,11 +388,9 @@ where
             && header_buffer[1] == 'A' as u8
             && header_buffer[2] == 'G' as u8;
         if is_id3v1 {
-            match skip(reader, &mut dump, 128 - header_buffer.len()) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+            if let Err(e) = skip(reader, &mut dump, 128 - header_buffer.len()) {
+                bail!((bytes_read, duration), e);
+            }
             bytes_read += 128 - header_buffer.len();
             continue;
         }
@@ -362,40 +402,34 @@ where
             && header_buffer[3] == 'T' as u8;
         if maybe_is_ape_v2 {
             let mut ape_header = [0; 12];
-            match reader.read_exact(&mut ape_header[..]) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+            if let Err(e) = reader.read_exact(&mut ape_header[..]) {
+                bail!((bytes_read, duration), e);
+            }
             let is_really_ape_v2 = ape_header[0] == 'A' as u8
                 && ape_header[1] == 'G' as u8
                 && ape_header[2] == 'E' as u8
                 && ape_header[3] == 'X' as u8;
             if !is_really_ape_v2 {
-                bail!(MP3DurationError::UnexpectedFrame {
-                    header: header,
-                    offset: bytes_read - header_buffer.len(),
-                    at_duration: duration
-                });
+                bail!(
+                    (bytes_read - header_buffer.len(), duration),
+                    ErrorKind::UnexpectedFrame { header }
+                );
             }
             let tag_size: usize = ((ape_header[8] as u32)
                 | ((ape_header[9] as u32) << 8)
                 | ((ape_header[10] as u32) << 16)
                 | ((ape_header[11] as u32) << 24)) as usize;
-            match skip(reader, &mut dump, tag_size + 16) {
-                Ok(_) => (),
-                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!(e),
-            };
+            if let Err(e) = skip(reader, &mut dump, tag_size + 16) {
+                bail!((bytes_read, duration), e);
+            }
             bytes_read += ape_header.len() + tag_size + 16;
             continue;
         }
 
-        bail!(MP3DurationError::UnexpectedFrame {
-            header: header,
-            offset: bytes_read - header_buffer.len(),
-            at_duration: duration
-        });
+        bail!(
+            (bytes_read - header_buffer.len(), duration),
+            ErrorKind::UnexpectedFrame { header }
+        );
     }
 
     Ok(duration)
@@ -436,8 +470,13 @@ pub fn from_path<P>(path: P) -> Result<Duration, MP3DurationError>
 where
     P: AsRef<Path>,
 {
-    let file = File::open(path)?;
-    from_file(&file)
+    File::open(path)
+        .map_err(|e| MP3DurationError {
+            kind: e.into(),
+            offset: 0,
+            at_duration: Duration::from_secs(0),
+        })
+        .and_then(|file| from_file(&file))
 }
 
 #[test]
@@ -531,8 +570,14 @@ fn bad_file() {
 #[test]
 fn truncated() {
     let path = Path::new("test/Truncated.mp3");
-    let duration = from_path(path).unwrap();
-    assert_eq!(206, duration.as_secs());
-    let nanos = duration.subsec_nanos();
-    assert!(7 * 100_000_000 < nanos && nanos < 8 * 100_000_000);
+    let error = from_path(path).unwrap_err();
+
+    if let ErrorKind::UnexpectedEOF = error.kind {
+        let duration = error.at_duration;
+        assert_eq!(206, duration.as_secs());
+        let nanos = duration.subsec_nanos();
+        assert!(7 * 100_000_000 < nanos && nanos < 8 * 100_000_000);
+    } else {
+        panic!("error.kind must be ErrorKind::UnexpectedEOF")
+    }
 }
