@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate failure;
 
 use core::fmt;
