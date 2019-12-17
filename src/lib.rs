@@ -588,7 +588,7 @@ fn truncated() {
 }
 
 #[test]
-fn borked() {
+fn mpeg_frame_too_short() {
     let path = Path::new("test/MPEGFrameTooShort.mp3");
     let error = from_path(path).unwrap_err();
 
