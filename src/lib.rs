@@ -28,7 +28,7 @@ impl fmt::Display for MP3DurationError {
 
 impl Fail for MP3DurationError {
     // Delegate `cause` to ErrorKind
-    fn cause(&self) -> Option<&Fail> {
+    fn cause(&self) -> Option<&dyn Fail> {
         self.kind.cause()
     }
 }
@@ -47,6 +47,8 @@ pub enum ErrorKind {
     UnexpectedFrame { header: u32 },
     #[fail(display = "Unexpected end of file")]
     UnexpectedEOF,
+    #[fail(display = "MPEG frame too short")]
+    MPEGFrameTooShort,
     #[fail(display = "Unexpected IO Error: {}", _0)]
     IOError(#[fail(cause)] io::Error),
 }
@@ -345,11 +347,15 @@ where
             )?;
             let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
 
-            if let Err(e) = skip(
-                reader,
-                &mut dump,
-                frame_length - header_buffer.len() - xing_offset - xing_buffer.len(),
-            ) {
+            let bytes_to_next_frame = frame_length
+                .checked_sub(header_buffer.len() + xing_offset + xing_buffer.len())
+                .ok_or(MP3DurationError {
+                    kind: ErrorKind::MPEGFrameTooShort,
+                    offset: bytes_read + xing_offset + xing_buffer.len(),
+                    at_duration: duration,
+                })?;
+
+            if let Err(e) = skip(reader, &mut dump, bytes_to_next_frame) {
                 bail!((bytes_read + xing_offset + xing_buffer.len(), duration), e);
             }
             bytes_read += frame_length - header_buffer.len();
@@ -578,5 +584,20 @@ fn truncated() {
         assert!(7 * 100_000_000 < nanos && nanos < 8 * 100_000_000);
     } else {
         panic!("error.kind must be ErrorKind::UnexpectedEOF")
+    }
+}
+
+#[test]
+fn borked() {
+    let path = Path::new("test/MPEGFrameTooShort.mp3");
+    let error = from_path(path).unwrap_err();
+
+    if let ErrorKind::MPEGFrameTooShort = error.kind {
+        let duration = error.at_duration;
+        assert_eq!(395, duration.as_secs());
+        let nanos = duration.subsec_nanos();
+        assert!(4 * 100_000_000 < nanos && nanos < 6 * 100_000_000);
+    } else {
+        panic!("error.kind must be ErrorKind::MPEGFrameTooShort")
     }
 }
