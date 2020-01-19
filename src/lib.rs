@@ -208,8 +208,8 @@ fn get_samples_per_frame(
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
 
-fn get_side_information_size(version: Version, mode: Mode) -> Result<u32, MP3DurationError> {
-    Ok(SIDE_INFORMATION_SIZES[version as usize][mode as usize])
+fn get_side_information_size(version: Version, mode: Mode) -> usize {
+    SIDE_INFORMATION_SIZES[version as usize][mode as usize] as usize
 }
 
 fn skip<T>(reader: &mut T, dump: &mut Vec<u8>, advance: usize) -> Result<(), std::io::Error>
@@ -303,7 +303,7 @@ where
                 get_sampling_rate(version, encoded_sampling_rate as u8, (bytes_read, duration))?;
             let num_samples = get_samples_per_frame(version, layer, (bytes_read, duration))?;
 
-            let xing_offset = get_side_information_size(version, mode)? as usize;
+            let xing_offset = get_side_information_size(version, mode);
             let mut xing_buffer = [0; 12];
             dump.resize(xing_offset, 0);
 
