@@ -62,16 +62,6 @@ impl From<io::Error> for ErrorKind {
     }
 }
 
-macro_rules! bail {
-    ($ctx:expr, $err:expr) => {
-        return Err(MP3DurationError {
-            kind: $err.into(),
-            offset: $ctx.0,
-            at_duration: $ctx.1,
-        });
-    };
-}
-
 #[derive(Clone, Copy, Debug)]
 enum Version {
     Mpeg1,
@@ -161,49 +151,43 @@ static SIDE_INFORMATION_SIZES: [[u32; 4]; 3] = [
     [17, 17, 17, 9],  // Mpeg25
 ];
 
-fn get_bitrate(
+fn get_bitrate<T: Read>(
+    context: &Context<T>,
     version: Version,
     layer: Layer,
     encoded_bitrate: u8,
-    ctx: (usize, Duration),
 ) -> Result<u32, MP3DurationError> {
     if encoded_bitrate >= 15 {
-        bail!(
-            ctx,
-            ErrorKind::InvalidBitrate {
-                bitrate: encoded_bitrate
-            }
-        );
+        return Err(context.error(ErrorKind::InvalidBitrate {
+            bitrate: encoded_bitrate,
+        }));
     }
     if layer == Layer::NotDefined {
-        bail!(ctx, ErrorKind::ForbiddenLayer);
+        return Err(context.error(ErrorKind::ForbiddenLayer));
     }
     Ok(1000 * BIT_RATES[version as usize][layer as usize][encoded_bitrate as usize])
 }
 
-fn get_sampling_rate(
+fn get_sampling_rate<T: Read>(
+    context: &Context<T>,
     version: Version,
     encoded_sampling_rate: u8,
-    ctx: (usize, Duration),
 ) -> Result<u32, MP3DurationError> {
     if encoded_sampling_rate >= 3 {
-        bail!(
-            ctx,
-            ErrorKind::InvalidSamplingRate {
-                sampling_rate: encoded_sampling_rate
-            }
-        );
+        return Err(context.error(ErrorKind::InvalidSamplingRate {
+            sampling_rate: encoded_sampling_rate,
+        }));
     }
     Ok(SAMPLING_RATES[version as usize][encoded_sampling_rate as usize])
 }
 
-fn get_samples_per_frame(
+fn get_samples_per_frame<T: Read>(
+    context: &Context<T>,
     version: Version,
     layer: Layer,
-    ctx: (usize, Duration),
 ) -> Result<u32, MP3DurationError> {
     if layer == Layer::NotDefined {
-        bail!(ctx, ErrorKind::ForbiddenLayer);
+        return Err(context.error(ErrorKind::ForbiddenLayer));
     }
     Ok(SAMPLES_PER_FRAME[version as usize][layer as usize])
 }
@@ -212,18 +196,61 @@ fn get_side_information_size(version: Version, mode: Mode) -> usize {
     SIDE_INFORMATION_SIZES[version as usize][mode as usize] as usize
 }
 
-fn skip<T>(reader: &mut T, num_bytes: usize) -> Result<(), std::io::Error>
-where
-    T: Read,
-{
-    let num_bytes_skipped = io::copy(&mut reader.take(num_bytes as u64), &mut io::sink())?;
-    if num_bytes_skipped < num_bytes as u64 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            format!("Could not skip {} bytes", num_bytes)
-        ));
+struct Context<'r, T> {
+    reader: &'r mut T,
+    bytes_read: usize,
+    duration: Duration,
+    reached_eof: bool,
+}
+
+impl<'r, T: Read> Context<'r, T> {
+    fn new(reader: &'r mut T) -> Self {
+        Context {
+            reader: reader,
+            bytes_read: 0,
+            duration: Duration::from_secs(0),
+            reached_eof: false,
+        }
     }
-    Ok(())
+
+    fn read_exact(&mut self, buffer: &mut [u8]) -> Result<(), MP3DurationError> {
+        let result = self.reader.read_exact(buffer);
+        if result.is_ok() {
+            self.bytes_read += buffer.len();
+        }
+        self.reached_eof = match &result {
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => true,
+            _ => false,
+        };
+        result.map_err(|e| self.error(e.into()))
+    }
+
+    fn skip(&mut self, num_bytes: usize) -> Result<(), MP3DurationError> {
+        let num_bytes_skipped = io::copy(&mut self.reader.take(num_bytes as u64), &mut io::sink());
+        match num_bytes_skipped {
+            Err(e) => Err(self.error(e.into())),
+            Ok(n) if n < num_bytes as u64 => {
+                self.reached_eof = true;
+                Err(self.error(ErrorKind::UnexpectedEOF))
+            }
+            _ => {
+                self.bytes_read += num_bytes;
+                Ok(())
+            }
+        }
+    }
+
+    fn reached_eof(&self) -> bool {
+        self.reached_eof
+    }
+
+    fn error(&self, e: ErrorKind) -> MP3DurationError {
+        MP3DurationError {
+            kind: e,
+            offset: self.bytes_read,
+            at_duration: self.duration,
+        }
+    }
 }
 
 /// Measures the duration of a mp3 file contained in any struct implementing Read.
@@ -248,26 +275,24 @@ where
 {
     let mut header_buffer = [0; 4];
 
-    let mut bytes_read = 0;
-    let mut duration = Duration::from_secs(0);
+    let mut context = Context::new(reader);
+
     loop {
         // Skip over all 0x00 bytes (these are probably incorrectly added padding bytes for id3v2)
         header_buffer[0] = 0;
         while header_buffer[0] == 0 {
-            match reader.read_exact(&mut header_buffer[0..1]) {
+            match context.read_exact(&mut header_buffer[0..1]) {
                 Ok(_) => (),
-                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => bail!((bytes_read, duration), e),
+                Err(_) if context.reached_eof() => break,
+                Err(e) => return Err(e),
             };
-            bytes_read += 1;
         }
 
-        match reader.read_exact(&mut header_buffer[1..]) {
+        match context.read_exact(&mut header_buffer[1..]) {
             Ok(_) => (),
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(e) => bail!((bytes_read, duration), e),
+            Err(_) if context.reached_eof() => break,
+            Err(e) => return Err(e),
         };
-        bytes_read += 3;
 
         // MPEG frame
         let header = (header_buffer[0] as u32) << 24
@@ -278,7 +303,7 @@ where
         if is_mp3 {
             let version = match (header >> 19) & 0b11 {
                 0 => Version::Mpeg25,
-                1 => bail!((bytes_read, duration), ErrorKind::ForbiddenVersion),
+                1 => return Err(context.error(ErrorKind::ForbiddenVersion)),
                 2 => Version::Mpeg2,
                 3 => Version::Mpeg1,
                 _ => unreachable!(),
@@ -304,20 +329,14 @@ where
                 _ => unreachable!(),
             };
 
-            let sampling_rate =
-                get_sampling_rate(version, encoded_sampling_rate as u8, (bytes_read, duration))?;
-            let num_samples = get_samples_per_frame(version, layer, (bytes_read, duration))?;
+            let sampling_rate = get_sampling_rate(&context, version, encoded_sampling_rate as u8)?;
+            let num_samples = get_samples_per_frame(&context, version, layer)?;
 
             let xing_offset = get_side_information_size(version, mode);
             let mut xing_buffer = [0; 12];
 
-            if let Err(e) = skip(reader, xing_offset) {
-                bail!((bytes_read, duration), e);
-            }
-
-            if let Err(e) = reader.read_exact(&mut xing_buffer) {
-                bail!((bytes_read + xing_offset, duration), e);
-            }
+            context.skip(xing_offset)?;
+            context.read_exact(&mut xing_buffer)?;
 
             let is_xing = xing_buffer[0] == 'X' as u8
                 && xing_buffer[1] == 'i' as u8
@@ -343,29 +362,17 @@ where
                 }
             }
 
-            let bitrate = get_bitrate(
-                version,
-                layer,
-                encoded_bitrate as u8,
-                (bytes_read, duration),
-            )?;
+            let bitrate = get_bitrate(&context, version, layer, encoded_bitrate as u8)?;
             let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
 
             let bytes_to_next_frame = frame_length
                 .checked_sub(header_buffer.len() + xing_offset + xing_buffer.len())
-                .ok_or(MP3DurationError {
-                    kind: ErrorKind::MPEGFrameTooShort,
-                    offset: bytes_read + xing_offset + xing_buffer.len(),
-                    at_duration: duration,
-                })?;
+                .ok_or(context.error(ErrorKind::MPEGFrameTooShort))?;
 
-            if let Err(e) = skip(reader, bytes_to_next_frame) {
-                bail!((bytes_read + xing_offset + xing_buffer.len(), duration), e);
-            }
-            bytes_read += frame_length - header_buffer.len();
+            context.skip(bytes_to_next_frame)?;
 
             let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
-            duration += Duration::new(0, frame_duration as u32);
+            context.duration += Duration::new(0, frame_duration as u32);
 
             continue;
         }
@@ -376,31 +383,23 @@ where
             && header_buffer[2] == '3' as u8;
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
-            if let Err(e) = reader.read_exact(&mut id3v2) {
-                bail!((bytes_read, duration), e);
-            }
+            context.read_exact(&mut id3v2)?;
             let flags = id3v2[1];
             let footer_size: usize = if 0 != (flags & 0b0001_0000) { 10 } else { 0 };
             let tag_size: usize = ((id3v2[5] as u32)
                 | ((id3v2[4] as u32) << 7)
                 | ((id3v2[3] as u32) << 14)
                 | ((id3v2[2] as u32) << 21)) as usize;
-            if let Err(e) = skip(reader, tag_size + footer_size) {
-                bail!((bytes_read + id3v2.len(), duration), e);
-            }
-            bytes_read += id3v2.len() + tag_size + footer_size;
+            context.skip(tag_size + footer_size)?;
             continue;
         }
 
         // ID3v1 frame
         let is_id3v1 = header_buffer[0] == 'T' as u8
-        && header_buffer[1] == 'A' as u8
-        && header_buffer[2] == 'G' as u8;
+            && header_buffer[1] == 'A' as u8
+            && header_buffer[2] == 'G' as u8;
         if is_id3v1 {
-            if let Err(e) = skip(reader, 128 - header_buffer.len()) {
-                bail!((bytes_read, duration), e);
-            }
-            bytes_read += 128 - header_buffer.len();
+            context.skip(128 - header_buffer.len())?;
             continue;
         }
 
@@ -411,37 +410,26 @@ where
             && header_buffer[3] == 'T' as u8;
         if maybe_is_ape_v2 {
             let mut ape_header = [0; 12];
-            if let Err(e) = reader.read_exact(&mut ape_header[..]) {
-                bail!((bytes_read, duration), e);
-            }
+            context.read_exact(&mut ape_header)?;
             let is_really_ape_v2 = ape_header[0] == 'A' as u8
                 && ape_header[1] == 'G' as u8
                 && ape_header[2] == 'E' as u8
                 && ape_header[3] == 'X' as u8;
-            if !is_really_ape_v2 {
-                bail!(
-                    (bytes_read - header_buffer.len(), duration),
-                    ErrorKind::UnexpectedFrame { header }
-                );
+            if is_really_ape_v2 {
+                let tag_size: usize = ((ape_header[8] as u32)
+                    | ((ape_header[9] as u32) << 8)
+                    | ((ape_header[10] as u32) << 16)
+                    | ((ape_header[11] as u32) << 24))
+                    as usize;
+                context.skip(tag_size + 16)?;
+                continue;
             }
-            let tag_size: usize = ((ape_header[8] as u32)
-                | ((ape_header[9] as u32) << 8)
-                | ((ape_header[10] as u32) << 16)
-                | ((ape_header[11] as u32) << 24)) as usize;
-            if let Err(e) = skip(reader, tag_size + 16) {
-                bail!((bytes_read, duration), e);
-            }
-            bytes_read += ape_header.len() + tag_size + 16;
-            continue;
         }
 
-        bail!(
-            (bytes_read - header_buffer.len(), duration),
-            ErrorKind::UnexpectedFrame { header }
-        );
+        return Err(context.error(ErrorKind::UnexpectedFrame { header }));
     }
 
-    Ok(duration)
+    Ok(context.duration)
 }
 
 /// Measures the duration of a file.
