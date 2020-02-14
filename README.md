@@ -18,6 +18,9 @@ println!("File duration: {:?}", duration);
 
 ##  Changelog
 
+### Version 0.1.9
+- Fixed a bug where the MP3Duration error type was no longer public since version 0.1.8 (thanks @compenguy for the contribution)
+
 ### Version 0.1.8
 - Minor performance improvements
 
