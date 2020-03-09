@@ -16,7 +16,7 @@ use crate::constants::*;
 use crate::context::Context;
 use crate::error::*;
 
-pub use crate::error::MP3DurationError;
+pub use crate::error::{MP3DurationError, ErrorKind};
 
 fn get_bitrate<T: Read>(
     context: &Context<T>,
