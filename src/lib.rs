@@ -1,5 +1,3 @@
-extern crate failure;
-
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -14,9 +12,8 @@ mod test;
 
 use crate::constants::*;
 use crate::context::Context;
-use crate::error::*;
 
-pub use crate::error::{MP3DurationError, ErrorKind};
+pub use crate::error::{ErrorKind, MP3DurationError};
 
 fn get_bitrate<T: Read>(
     context: &Context<T>,

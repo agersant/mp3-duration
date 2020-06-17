@@ -17,4 +17,4 @@ exclude = [
 travis-ci = { repository = "agersant/mp3-duration", branch = "master" }
 
 [dependencies]
-failure = "0.1.5"
+thiserror = "1"
