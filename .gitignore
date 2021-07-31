@@ -1,3 +1,8 @@
-/target/
+# Only project specific excludes, i.e. no platform or 3rd-party tool
+# excludes like .DS_Store or .vscode.
+
+# Temporary Cargo artifacts
 Cargo.lock
-**/*.rs.bk
+
+# Build directory (without a trailing slash to allow using symbolic links)
+/target
