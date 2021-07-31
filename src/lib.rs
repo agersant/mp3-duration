@@ -15,6 +15,9 @@ use crate::context::Context;
 
 pub use crate::error::{ErrorKind, MP3DurationError};
 
+const FRAME_HEADER_SIZE: usize = 4;
+const XING_HEADER_SIZE: usize = 12;
+
 fn get_bitrate<T: Read>(
     context: &Context<T>,
     version: Version,
@@ -80,9 +83,11 @@ pub fn from_read<T>(reader: &mut T) -> Result<Duration, MP3DurationError>
 where
     T: Read,
 {
-    let mut header_buffer = [0; 4];
+    let mut header_buffer = [0; FRAME_HEADER_SIZE];
 
     let mut context = Context::new(reader);
+
+    let mut first_mp3_frame = true;
 
     loop {
         // Skip over all 0x00 bytes (these are probably incorrectly added padding bytes for id3v2)
@@ -139,42 +144,48 @@ where
             let sampling_rate = get_sampling_rate(&context, version, encoded_sampling_rate as u8)?;
             let num_samples = get_samples_per_frame(&context, version, layer)?;
 
-            let xing_offset = get_side_information_size(version, mode);
-            let mut xing_buffer = [0; 12];
+            let bitrate = get_bitrate(&context, version, layer, encoded_bitrate as u8)?;
 
-            context.skip(xing_offset)?;
-            context.read_exact(&mut xing_buffer)?;
+            let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
+            let side_information_length = get_side_information_size(version, mode);
+            let min_expected_frame_length = FRAME_HEADER_SIZE + side_information_length;
+            let mut bytes_to_next_frame = frame_length
+                .checked_sub(min_expected_frame_length)
+                .ok_or(context.error(ErrorKind::MPEGFrameTooShort))?;
+            context.skip(side_information_length)?;
 
-            let is_xing = xing_buffer[0] == 'X' as u8
-                && xing_buffer[1] == 'i' as u8
-                && xing_buffer[2] == 'n' as u8
-                && xing_buffer[3] == 'g' as u8;
-            let is_info = xing_buffer[0] == 'I' as u8
-                && xing_buffer[1] == 'n' as u8
-                && xing_buffer[2] == 'f' as u8
-                && xing_buffer[3] == 'o' as u8;
-            if is_xing || is_info {
-                let has_frames = 0 != (xing_buffer[7] & 1);
-                if has_frames {
-                    let num_frames = (xing_buffer[8] as u32) << 24
-                        | (xing_buffer[9] as u32) << 16
-                        | (xing_buffer[10] as u32) << 8
-                        | xing_buffer[11] as u32;
-                    let rate = sampling_rate as u64;
-                    let billion = 1_000_000_000;
-                    let frames_x_samples = num_frames as u64 * num_samples as u64;
-                    let seconds = frames_x_samples / rate;
-                    let nanoseconds = (billion * frames_x_samples) / rate - billion * seconds;
-                    return Ok(Duration::new(seconds, nanoseconds as u32));
+            // The XING header could only appear in the first MP3 frame!
+            if first_mp3_frame && bytes_to_next_frame >= XING_HEADER_SIZE {
+                let mut xing_header = [0; XING_HEADER_SIZE];
+                context.read_exact(&mut xing_header)?;
+                bytes_to_next_frame -= XING_HEADER_SIZE;
+
+                let is_xing = xing_header[0] == 'X' as u8
+                    && xing_header[1] == 'i' as u8
+                    && xing_header[2] == 'n' as u8
+                    && xing_header[3] == 'g' as u8;
+                let is_info = xing_header[0] == 'I' as u8
+                    && xing_header[1] == 'n' as u8
+                    && xing_header[2] == 'f' as u8
+                    && xing_header[3] == 'o' as u8;
+                if is_xing || is_info {
+                    let has_frames = 0 != (xing_header[7] & 1);
+                    if has_frames {
+                        let num_frames = (xing_header[8] as u32) << 24
+                            | (xing_header[9] as u32) << 16
+                            | (xing_header[10] as u32) << 8
+                            | xing_header[11] as u32;
+                        let rate = sampling_rate as u64;
+                        let billion = 1_000_000_000;
+                        let frames_x_samples = num_frames as u64 * num_samples as u64;
+                        let seconds = frames_x_samples / rate;
+                        let nanoseconds =
+                            (billion * frames_x_samples) / rate - billion * seconds;
+                        return Ok(Duration::new(seconds, nanoseconds as u32));
+                    }
                 }
             }
-
-            let bitrate = get_bitrate(&context, version, layer, encoded_bitrate as u8)?;
-            let frame_length = (num_samples / 8 * bitrate / sampling_rate + padding) as usize;
-
-            let bytes_to_next_frame = frame_length
-                .checked_sub(header_buffer.len() + xing_offset + xing_buffer.len())
-                .ok_or(context.error(ErrorKind::MPEGFrameTooShort))?;
+            first_mp3_frame = false;
 
             context.skip(bytes_to_next_frame)?;
 

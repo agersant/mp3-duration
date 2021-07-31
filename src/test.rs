@@ -109,14 +109,8 @@ fn truncated() {
 #[test]
 fn mpeg_frame_too_short() {
     let path = Path::new("test/MPEGFrameTooShort.mp3");
-    let error = from_path(path).unwrap_err();
-
-    if let ErrorKind::MPEGFrameTooShort = error.kind {
-        let duration = error.at_duration;
-        assert_eq!(395, duration.as_secs());
-        let nanos = duration.subsec_nanos();
-        assert!(4 * 100_000_000 < nanos && nanos < 6 * 100_000_000);
-    } else {
-        panic!("error.kind must be ErrorKind::MPEGFrameTooShort")
-    }
+    let duration = from_path(path).unwrap();
+    assert_eq!(395, duration.as_secs());
+    let nanos = duration.subsec_nanos();
+    assert!(4 * 100_000_000 < nanos && nanos < 6 * 100_000_000);
 }
