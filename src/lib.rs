@@ -17,6 +17,7 @@ pub use crate::error::{ErrorKind, MP3DurationError};
 
 const FRAME_HEADER_SIZE: usize = 4;
 const XING_HEADER_SIZE: usize = 12;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
 fn get_bitrate<T: Read>(
     context: &Context<T>,
@@ -175,12 +176,11 @@ where
                             | (xing_header[9] as u32) << 16
                             | (xing_header[10] as u32) << 8
                             | xing_header[11] as u32;
-                        let rate = sampling_rate as u64;
-                        let billion = 1_000_000_000;
-                        let frames_x_samples = num_frames as u64 * num_samples as u64;
-                        let seconds = frames_x_samples / rate;
-                        let nanoseconds =
-                            (billion * frames_x_samples) / rate - billion * seconds;
+                        let sampling_rate = sampling_rate as u64;
+                        let total_samples = num_frames as u64 * num_samples as u64;
+                        let seconds = total_samples / sampling_rate;
+                        let nanoseconds = (total_samples * NANOS_PER_SECOND / sampling_rate)
+                            - NANOS_PER_SECOND * seconds;
                         return Ok(Duration::new(seconds, nanoseconds as u32));
                     }
                 }
@@ -189,7 +189,7 @@ where
 
             context.skip(bytes_to_next_frame)?;
 
-            let frame_duration = (num_samples as u64 * 1_000_000_000) / (sampling_rate as u64);
+            let frame_duration = (num_samples as u64 * NANOS_PER_SECOND) / (sampling_rate as u64);
             context.duration += Duration::new(0, frame_duration as u32);
 
             continue;
