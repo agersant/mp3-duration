@@ -145,14 +145,14 @@ where
             context.skip(xing_offset)?;
             context.read_exact(&mut xing_buffer)?;
 
-            let is_xing = xing_buffer[0] == 'X' as u8
-                && xing_buffer[1] == 'i' as u8
-                && xing_buffer[2] == 'n' as u8
-                && xing_buffer[3] == 'g' as u8;
-            let is_info = xing_buffer[0] == 'I' as u8
-                && xing_buffer[1] == 'n' as u8
-                && xing_buffer[2] == 'f' as u8
-                && xing_buffer[3] == 'o' as u8;
+            let is_xing = xing_buffer[0] == b'X'
+                && xing_buffer[1] == b'i'
+                && xing_buffer[2] == b'n'
+                && xing_buffer[3] == b'g';
+            let is_info = xing_buffer[0] == b'I'
+                && xing_buffer[1] == b'n'
+                && xing_buffer[2] == b'f'
+                && xing_buffer[3] == b'o';
             if is_xing || is_info {
                 let has_frames = 0 != (xing_buffer[7] & 1);
                 if has_frames {
@@ -185,9 +185,8 @@ where
         }
 
         // ID3v2 frame
-        let is_id3v2 = header_buffer[0] == 'I' as u8
-            && header_buffer[1] == 'D' as u8
-            && header_buffer[2] == '3' as u8;
+        let is_id3v2 =
+            header_buffer[0] == b'I' && header_buffer[1] == b'D' && header_buffer[2] == b'3';
         if is_id3v2 {
             let mut id3v2 = [0; 6]; // 4 bytes already read
             context.read_exact(&mut id3v2)?;
@@ -202,26 +201,25 @@ where
         }
 
         // ID3v1 frame
-        let is_id3v1 = header_buffer[0] == 'T' as u8
-            && header_buffer[1] == 'A' as u8
-            && header_buffer[2] == 'G' as u8;
+        let is_id3v1 =
+            header_buffer[0] == b'T' && header_buffer[1] == b'A' && header_buffer[2] == b'G';
         if is_id3v1 {
             context.skip(128 - header_buffer.len())?;
             continue;
         }
 
         // APEv2 frame
-        let maybe_is_ape_v2 = header_buffer[0] == 'A' as u8
-            && header_buffer[1] == 'P' as u8
-            && header_buffer[2] == 'E' as u8
-            && header_buffer[3] == 'T' as u8;
+        let maybe_is_ape_v2 = header_buffer[0] == b'A'
+            && header_buffer[1] == b'P'
+            && header_buffer[2] == b'E'
+            && header_buffer[3] == b'T';
         if maybe_is_ape_v2 {
             let mut ape_header = [0; 12];
             context.read_exact(&mut ape_header)?;
-            let is_really_ape_v2 = ape_header[0] == 'A' as u8
-                && ape_header[1] == 'G' as u8
-                && ape_header[2] == 'E' as u8
-                && ape_header[3] == 'X' as u8;
+            let is_really_ape_v2 = ape_header[0] == b'A'
+                && ape_header[1] == b'G'
+                && ape_header[2] == b'E'
+                && ape_header[3] == b'X';
             if is_really_ape_v2 {
                 let tag_size: usize = ((ape_header[8] as u32)
                     | ((ape_header[9] as u32) << 8)
